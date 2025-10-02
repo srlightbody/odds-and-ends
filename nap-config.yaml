@@ -1,0 +1,4 @@
+nodePoolDefaults:
+  nodeLabels:
+    workload-type: overflow
+  serviceAccount: daily-west1-cluster@onx-daily.iam.gserviceaccount.com

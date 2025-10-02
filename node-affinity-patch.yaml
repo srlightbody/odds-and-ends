@@ -1,0 +1,16 @@
+spec:
+  template:
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: "workload-type"
+                operator: In
+                values:
+                - "core"
+      tolerations:
+      - key: "workload-type"
+        operator: "Equal"
+        value: "core"

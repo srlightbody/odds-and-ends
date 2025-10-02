@@ -1,0 +1,15 @@
+module.deployments_central1["oathkeeper"].module.deployment-alerts-base[0].kubernetes_config_map.prometheus_alerts - qxhkr
+module.deployments_central1["oathkeeper"].module.deployment-alerts-hpa[0].kubernetes_config_map.prometheus_alerts - 4rgvl
+module.deployments_central1["oathkeeper"].module.deployment-alerts-scrape-job[0].kubernetes_config_map.prometheus_alerts - wr84d
+module.deployments_central1["oathkeeper"].module.passed-in-prometheus-alerts[0].kubernetes_config_map.prometheus_alerts -  nm9sp
+module.deployments_central1["oathkeeper-hydrator"].module.deployment-alerts-base[0].kubernetes_config_map.prometheus_alerts - db48f
+module.deployments_central1["oathkeeper-hydrator"].module.deployment-alerts-hpa[0].kubernetes_config_map.prometheus_alerts - jrz4q
+module.deployments_central1["oathkeeper-hydrator"].module.deployment-alerts-scrape-job[0].kubernetes_config_map.prometheus_alerts -  ccxtp
+
+module.deployments_west1["oathkeeper"].module.deployment-alerts-base[0].kubernetes_config_map.prometheus_alerts -  94pvw
+module.deployments_west1["oathkeeper"].module.deployment-alerts-hpa[0].kubernetes_config_map.prometheus_alerts -  fhqbf
+module.deployments_west1["oathkeeper"].module.deployment-alerts-scrape-job[0].kubernetes_config_map.prometheus_alerts -  r48gj
+module.deployments_west1["oathkeeper"].module.passed-in-prometheus-alerts[0].kubernetes_config_map.prometheus_alerts - fsj55
+module.deployments_west1["oathkeeper-hydrator"].module.deployment-alerts-base[0].kubernetes_config_map.prometheus_alerts -  z498s
+module.deployments_west1["oathkeeper-hydrator"].module.deployment-alerts-hpa[0].kubernetes_config_map.prometheus_alerts - 2v9gf
+module.deployments_west1["oathkeeper-hydrator"].module.deployment-alerts-scrape-job[0].kubernetes_config_map.prometheus_alerts - lhwp4
