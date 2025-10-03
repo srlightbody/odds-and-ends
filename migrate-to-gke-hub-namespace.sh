@@ -18,6 +18,16 @@ PROJECTS_DIR="$HOME/Projects"
 DRY_RUN=false
 SPECIFIC_REPO=""
 
+# Set Cloudsmith token for terraform module access
+set_cloudsmith_token() {
+    if [[ -z "$TF_TOKEN_terraform_cloudsmith_io" ]]; then
+        export TF_TOKEN_terraform_cloudsmith_io="onxmaps-6aJ/terraform-modules/$(gcloud --project=onx-ci secrets versions access latest --secret='cloudsmith_samuel-lightbody')"
+    fi
+}
+
+# Set token at start
+set_cloudsmith_token
+
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -262,6 +272,24 @@ process_repo() {
         cd "$repo_path"
         migration_failed=false
 
+        # Initialize tofu with upgrade to ensure backend is ready
+        echo ""
+        echo "Initializing tofu..."
+        local init_tfvars=$(find . -maxdepth 1 -name "*.tfvars" | head -n1)
+        if [[ -z "$init_tfvars" ]]; then
+            echo "❌ ERROR: No tfvars file found for init"
+            echo "Skipping $repo"
+            return
+        fi
+
+        echo "Running: tofu init --upgrade -var-file=\"$init_tfvars\""
+        if ! tofu init --upgrade -var-file="$init_tfvars"; then
+            echo "❌ ERROR: Failed to initialize tofu (see output above)"
+            echo "Skipping $repo"
+            return
+        fi
+        echo "✓ Initialized with $init_tfvars"
+
         for workspace in "${workspaces[@]}"; do
             echo ""
             echo "Processing workspace: $workspace"
@@ -327,6 +355,13 @@ process_repo() {
             # Commit
             if git commit -m "SRE-6189 switch to fleet namespace"; then
                 echo "✓ Changes committed to git"
+
+                # Push changes
+                if git push; then
+                    echo "✓ Changes pushed to remote"
+                else
+                    echo "⚠️  Git push failed"
+                fi
             else
                 echo "⚠️  Git commit failed or no changes to commit"
             fi
