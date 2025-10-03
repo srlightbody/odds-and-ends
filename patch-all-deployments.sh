@@ -3,7 +3,7 @@
 # Function to display usage
 usage() {
     echo "Usage: $0 <environment> [--dry-run] [--deployment <namespace/deployment>] [--only-missing] [--atlantis-path <path>]"
-    echo "Environments: daily, staging, production"
+    echo "Environments: daily, staging, production, content-daily, content-staging, content-production"
     echo "Options:"
     echo "  --dry-run                          Show what would be changed without making modifications"
     echo "  --deployment <namespace/deployment> Target a specific deployment (e.g., --deployment foo/bar)"
@@ -37,7 +37,7 @@ while [[ $# -gt 0 ]]; do
             ATLANTIS_PATH=$2
             shift 2
             ;;
-        daily|staging|production)
+        daily|staging|production|content-daily|content-staging|content-production)
             ENVIRONMENT=$1
             shift
             ;;
@@ -56,7 +56,7 @@ fi
 
 # Validate environment
 case $ENVIRONMENT in
-    daily|staging|production)
+    daily|staging|production|content-daily|content-staging|content-production)
         ;;
     *)
         echo "Error: Invalid environment '$ENVIRONMENT'"
