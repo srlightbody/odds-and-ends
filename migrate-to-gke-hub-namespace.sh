@@ -99,6 +99,9 @@ TFVARS_FILES=(
     "onx-content-daily.tfvars"
     "onx-content-staging.tfvars"
     "onx-content-production.tfvars"
+    "onx-ops.tfvars"
+    "onx-ci.tfvars"
+    "onx-agentspace.tfvars"
 )
 
 # Workspace mapping (tfvars filename -> workspace name)
@@ -109,6 +112,9 @@ declare -A WORKSPACE_MAP=(
     ["onx-content-daily.tfvars"]="onx-content-daily"
     ["onx-content-staging.tfvars"]="onx-content-staging"
     ["onx-content-production.tfvars"]="onx-content-production"
+    ["onx-ops.tfvars"]="onx-ops"
+    ["onx-ci.tfvars"]="onx-ci"
+    ["onx-agentspace.tfvars"]="onx-agentspace"
 )
 
 process_repo() {
