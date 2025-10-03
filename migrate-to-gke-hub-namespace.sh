@@ -10,12 +10,14 @@
 # Options:
 #   --repo REPO_NAME    Only process this specific repo
 #   --dry-run           Show what would be done without making changes
+#   --verbose           Show detailed dry-run output (use with --dry-run)
 #   --help              Show this help message
 
 set -e
 
 PROJECTS_DIR="$HOME/Projects"
 DRY_RUN=false
+VERBOSE=false
 SPECIFIC_REPO=""
 
 # Set Cloudsmith token for terraform module access
@@ -37,6 +39,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --dry-run)
             DRY_RUN=true
+            shift
+            ;;
+        --verbose)
+            VERBOSE=true
             shift
             ;;
         --help)
@@ -109,41 +115,57 @@ process_repo() {
     local repo=$1
     local repo_path="$PROJECTS_DIR/$repo"
 
-    echo "=========================================="
-    echo "Processing: $repo"
-    echo "=========================================="
+    if [[ "$DRY_RUN" == "false" || "$VERBOSE" == "true" ]]; then
+        echo "=========================================="
+        echo "Processing: $repo"
+        echo "=========================================="
+    fi
 
     # Check if namespace.tf exists
     if [[ ! -f "$repo_path/namespace.tf" ]]; then
-        echo "❌ No namespace.tf found, skipping"
-        return
+        if [[ "$DRY_RUN" == "false" || "$VERBOSE" == "true" ]]; then
+            echo "❌ No namespace.tf found, skipping"
+        fi
+        return 0
     fi
 
-    # Check if still using kubernetes_namespace
-    if ! grep -q 'resource.*"kubernetes_namespace"' "$repo_path/namespace.tf"; then
-        echo "✓ Already migrated to google_gke_hub_namespace"
-        return
+    # Check if still using kubernetes_namespace (check all .tf files)
+    if ! grep -rq 'resource.*"kubernetes_namespace"' "$repo_path"/*.tf 2>/dev/null; then
+        if [[ "$DRY_RUN" == "false" || "$VERBOSE" == "true" ]]; then
+            echo "✓ Already migrated to google_gke_hub_namespace"
+        fi
+        return 0
     fi
 
     # Check for enable_service_mesh variable
-    echo "Checking for enable_service_mesh variable..."
+    if [[ "$DRY_RUN" == "false" || "$VERBOSE" == "true" ]]; then
+        echo "Checking for enable_service_mesh variable..."
+    fi
     if ! grep -rq "enable_service_mesh" "$repo_path"/*.tf; then
-        echo "⚠️  enable_service_mesh variable not found, will add it to locals.tf"
+        if [[ "$DRY_RUN" == "false" || "$VERBOSE" == "true" ]]; then
+            echo "⚠️  enable_service_mesh variable not found, will add it to locals.tf"
+        fi
 
         # Determine default value based on presence of onx-content-*.tfvars files
         local default_value="true"
-        if ls "$repo_path"/onx-content-*.tfvars 2>/dev/null | grep -q .; then
+        setopt local_options null_glob
+        local content_files=("$repo_path"/onx-content-*.tfvars)
+        if [[ ${#content_files[@]} -gt 0 && -f "${content_files[1]}" ]]; then
             default_value="false"
-            echo "   Found onx-content-*.tfvars files, setting default to false"
+            if [[ "$DRY_RUN" == "false" || "$VERBOSE" == "true" ]]; then
+                echo "   Found onx-content-*.tfvars files, setting default to false"
+            fi
         else
-            echo "   No onx-content-*.tfvars files found, setting default to true"
+            if [[ "$DRY_RUN" == "false" || "$VERBOSE" == "true" ]]; then
+                echo "   No onx-content-*.tfvars files found, setting default to true"
+            fi
         fi
 
         if [[ "$DRY_RUN" == "false" ]]; then
             # Check if locals.tf exists
             if [[ ! -f "$repo_path/locals.tf" ]]; then
                 echo "❌ ERROR: locals.tf not found, cannot add enable_service_mesh"
-                return
+                return 1
             fi
 
             # Add enable_service_mesh to locals.tf
@@ -164,13 +186,17 @@ process_repo() {
                 echo "✓ Added enable_service_mesh to locals.tf"
             else
                 echo "❌ ERROR: Could not find locals block in locals.tf"
-                return
+                return 1
             fi
         else
-            echo "   [DRY RUN] Would add: enable_service_mesh = $default_value to locals.tf"
+            if [[ "$VERBOSE" == "true" ]]; then
+                echo "   [DRY RUN] Would add: enable_service_mesh = $default_value to locals.tf"
+            fi
         fi
     else
-        echo "✓ Found enable_service_mesh variable"
+        if [[ "$DRY_RUN" == "false" || "$VERBOSE" == "true" ]]; then
+            echo "✓ Found enable_service_mesh variable"
+        fi
     fi
 
     # Find which tfvars files exist
@@ -183,75 +209,88 @@ process_repo() {
 
     if [[ ${#workspaces[@]} -eq 0 ]]; then
         echo "❌ No target tfvars files found"
-        return
+        return 1
     fi
 
-    echo "Found workspaces: ${workspaces[@]}"
+    if [[ "$DRY_RUN" == "false" || "$VERBOSE" == "true" ]]; then
+        echo "Found workspaces: ${workspaces[@]}"
+    fi
 
     # Get list of kubernetes_namespace resources to remove
-    echo ""
-    echo "Finding kubernetes_namespace resources to remove from state..."
+    if [[ "$DRY_RUN" == "false" || "$VERBOSE" == "true" ]]; then
+        echo ""
+        echo "Finding kubernetes_namespace resources to remove from state..."
+    fi
     local resources=($(grep 'resource "kubernetes_namespace"' "$repo_path/namespace.tf" | awk '{print $3}' | tr -d '"'))
 
     if [[ ${#resources[@]} -eq 0 ]]; then
         echo "❌ No kubernetes_namespace resources found"
-        return
+        return 1
     fi
 
-    echo "Resources to remove:"
-    for resource in "${resources[@]}"; do
-        echo "  - kubernetes_namespace.$resource"
-    done
+    if [[ "$DRY_RUN" == "false" || "$VERBOSE" == "true" ]]; then
+        echo "Resources to remove:"
+        for resource in "${resources[@]}"; do
+            echo "  - kubernetes_namespace.$resource"
+        done
+    fi
 
     if [[ "$DRY_RUN" == "true" ]]; then
-        echo ""
-        echo "[DRY RUN] Would perform the following actions:"
-        echo ""
+        if [[ "$VERBOSE" == "true" ]]; then
+            echo ""
+            echo "[DRY RUN] Would perform the following actions:"
+            echo ""
 
-        # Check if enable_service_mesh needs to be added
-        if ! grep -rq "enable_service_mesh" "$repo_path"/*.tf; then
-            local default_value="true"
-            if ls "$repo_path"/onx-content-*.tfvars 2>/dev/null | grep -q .; then
-                default_value="false"
+            # Check if enable_service_mesh needs to be added
+            if ! grep -rq "enable_service_mesh" "$repo_path"/*.tf; then
+                local default_value="true"
+                setopt local_options null_glob
+                local content_files=("$repo_path"/onx-content-*.tfvars)
+                if [[ ${#content_files[@]} -gt 0 && -f "${content_files[1]}" ]]; then
+                    default_value="false"
+                fi
+                echo "1. Add enable_service_mesh = $default_value to locals.tf"
+                echo ""
             fi
-            echo "1. Add enable_service_mesh = $default_value to locals.tf"
+
+            echo "2. Update namespace.tf with new google_gke_hub_namespace resource"
             echo ""
-        fi
 
-        echo "2. Update namespace.tf with new google_gke_hub_namespace resource"
-        echo ""
+            if [[ -f "$repo_path/deployments.tf" ]]; then
+                echo "3. Update deployments.tf namespace references:"
+                echo "     sed 's|resource.kubernetes_namespace.*.metadata[0].name|resource.google_gke_hub_namespace.fleet_namespace.scope_namespace_id|g'"
+                echo ""
+            fi
 
-        if [[ -f "$repo_path/deployments.tf" ]]; then
-            echo "3. Update deployments.tf namespace references:"
-            echo "     sed 's|resource.kubernetes_namespace.*.metadata[0].name|resource.google_gke_hub_namespace.fleet_namespace.scope_namespace_id|g'"
-            echo ""
-        fi
-
-        echo "4. Remove old state and apply new resource for each workspace:"
-        for workspace in "${workspaces[@]}"; do
-            echo "   Workspace: $workspace"
-            for resource in "${resources[@]}"; do
-                echo "     tofu workspace select $workspace"
-                echo "     tofu state rm 'kubernetes_namespace.$resource'"
+            echo "4. Remove old state and apply new resource for each workspace:"
+            for workspace in "${workspaces[@]}"; do
+                echo "   Workspace: $workspace"
+                for resource in "${resources[@]}"; do
+                    echo "     tofu workspace select $workspace"
+                    echo "     tofu state rm 'kubernetes_namespace.$resource'"
+                done
+                echo "     tofu apply -target=google_gke_hub_namespace.fleet_namespace -auto-approve"
             done
-            echo "     tofu apply -target=google_gke_hub_namespace.fleet_namespace -auto-approve"
-        done
-        echo ""
-        echo "5. Commit changes to git:"
-        echo "     git add namespace.tf"
-        if [[ -f "$repo_path/deployments.tf" ]]; then
-            echo "     git add deployments.tf"
+            echo ""
+            echo "5. Commit changes to git:"
+            echo "     git add namespace.tf"
+            if [[ -f "$repo_path/deployments.tf" ]]; then
+                echo "     git add deployments.tf"
+            fi
+            if ! grep -rq "enable_service_mesh" "$repo_path"/*.tf; then
+                echo "     git add locals.tf"
+            fi
+            echo "     git commit -m 'SRE-6189 switch to fleet namespace'"
+            echo "     git push"
+        else
+            echo "$repo: ✓ Would migrate"
         fi
-        if ! grep -rq "enable_service_mesh" "$repo_path"/*.tf; then
-            echo "     git add locals.tf"
-        fi
-        echo "     git commit -m 'SRE-6189 switch to fleet namespace'"
     else
         echo ""
         read "?Proceed with migration? (y/N) " confirm
         if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
             echo "Skipping $repo"
-            return
+            return 0
         fi
 
         # Update namespace.tf
@@ -278,15 +317,13 @@ process_repo() {
         local init_tfvars=$(find . -maxdepth 1 -name "*.tfvars" | head -n1)
         if [[ -z "$init_tfvars" ]]; then
             echo "❌ ERROR: No tfvars file found for init"
-            echo "Skipping $repo"
-            return
+            return 1
         fi
 
         echo "Running: tofu init --upgrade -var-file=\"$init_tfvars\""
         if ! tofu init --upgrade -var-file="$init_tfvars"; then
             echo "❌ ERROR: Failed to initialize tofu (see output above)"
-            echo "Skipping $repo"
-            return
+            return 1
         fi
         echo "✓ Initialized with $init_tfvars"
 
@@ -318,7 +355,7 @@ process_repo() {
             # Apply the new google_gke_hub_namespace resource
             echo ""
             echo "  Applying new google_gke_hub_namespace.fleet_namespace..."
-            if tofu apply -target=google_gke_hub_namespace.fleet_namespace -auto-approve; then
+            if tofu apply -target=google_gke_hub_namespace.fleet_namespace -var-file="$workspace.tfvars" -auto-approve; then
                 echo "  ✓ Applied successfully"
             else
                 echo "  ❌ ERROR: Failed to apply google_gke_hub_namespace.fleet_namespace"
@@ -330,7 +367,7 @@ process_repo() {
         if [[ "$migration_failed" == "true" ]]; then
             echo ""
             echo "⚠️  Migration completed with errors for $repo"
-            echo "  Skipping git commit due to errors"
+            return 1
         else
             echo ""
             echo "✓ Migration complete for $repo"
@@ -368,7 +405,9 @@ process_repo() {
         fi
     fi
 
-    echo ""
+    if [[ "$DRY_RUN" == "false" || "$VERBOSE" == "true" ]]; then
+        echo ""
+    fi
 }
 
 # Main execution
@@ -388,7 +427,7 @@ else
     for repo in $(ls "$PROJECTS_DIR" | grep "^atlantis-"); do
         namespace_file="$PROJECTS_DIR/$repo/namespace.tf"
         [[ ! -f "$namespace_file" ]] && continue
-        grep -q 'resource.*"kubernetes_namespace"' "$namespace_file" || continue
+        grep -rq 'resource.*"kubernetes_namespace"' "$PROJECTS_DIR/$repo"/*.tf 2>/dev/null || continue
 
         has_tfvars=false
         for tfvars in "${TFVARS_FILES[@]}"; do
@@ -418,7 +457,11 @@ else
     fi
 
     for repo in "${repos_to_process[@]}"; do
-        process_repo "$repo"
+        if ! process_repo "$repo"; then
+            echo ""
+            echo "ERROR: Failed processing $repo, stopping"
+            exit 1
+        fi
     done
 fi
 
