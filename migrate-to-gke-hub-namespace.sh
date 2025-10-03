@@ -256,9 +256,13 @@ process_repo() {
             echo "2. Update namespace.tf with new google_gke_hub_namespace resource"
             echo ""
 
-            if [[ -f "$repo_path/deployments.tf" ]]; then
-                echo "3. Update deployments.tf namespace references:"
-                echo "     sed 's|resource.kubernetes_namespace.*.metadata[0].name|resource.google_gke_hub_namespace.fleet_namespace.scope_namespace_id|g'"
+            # Check which .tf files need updating
+            local files_to_update=($(grep -l "kubernetes_namespace\.[^[:space:]]*\.metadata" "$repo_path"/*.tf 2>/dev/null || true))
+            if [[ ${#files_to_update[@]} -gt 0 ]]; then
+                echo "3. Update namespace references in ${#files_to_update[@]} .tf file(s):"
+                for tf_file in "${files_to_update[@]}"; do
+                    echo "     - $(basename "$tf_file")"
+                done
                 echo ""
             fi
 
@@ -274,9 +278,15 @@ process_repo() {
             echo ""
             echo "5. Commit changes to git:"
             echo "     git add namespace.tf"
-            if [[ -f "$repo_path/deployments.tf" ]]; then
-                echo "     git add deployments.tf"
+
+            # Show which .tf files would be modified
+            local files_to_update=($(grep -l "kubernetes_namespace\.[^[:space:]]*\.metadata" "$repo_path"/*.tf 2>/dev/null || true))
+            if [[ ${#files_to_update[@]} -gt 0 ]]; then
+                for tf_file in "${files_to_update[@]}"; do
+                    echo "     git add $(basename "$tf_file")"
+                done
             fi
+
             if ! grep -rq "enable_service_mesh" "$repo_path"/*.tf; then
                 echo "     git add locals.tf"
             fi
@@ -293,18 +303,40 @@ process_repo() {
             return 0
         fi
 
-        # Update namespace.tf
-        echo "Updating namespace.tf..."
-        echo "$NEW_NAMESPACE_CONTENT" > "$repo_path/namespace.tf"
+        # Check if namespace.tf needs updating
+        local namespace_needs_update=false
+        if grep -q "google_gke_hub_namespace" "$repo_path/namespace.tf" 2>/dev/null; then
+            echo "✓ namespace.tf already has google_gke_hub_namespace"
+        else
+            echo "Updating namespace.tf..."
+            echo "$NEW_NAMESPACE_CONTENT" > "$repo_path/namespace.tf"
+            namespace_needs_update=true
+        fi
 
-        # Update deployments.tf to reference the new resource
-        if [[ -f "$repo_path/deployments.tf" ]]; then
-            echo "Updating deployments.tf namespace references..."
+        # Update all .tf files to reference the new resource
+        echo "Checking for namespace references in .tf files..."
 
-            # Replace kubernetes_namespace references with google_gke_hub_namespace
-            sed -i 's|resource\.kubernetes_namespace\.[^.]*\.metadata\[0\]\.name|resource.google_gke_hub_namespace.fleet_namespace.scope_namespace_id|g' "$repo_path/deployments.tf"
+        # Find all .tf files that reference kubernetes_namespace (exclude namespace.tf itself)
+        local files_to_update=($(grep -l "kubernetes_namespace\.[^[:space:]]*\.metadata" "$repo_path"/*.tf 2>/dev/null | grep -v "/namespace.tf$" || true))
 
-            echo "✓ Updated deployments.tf"
+        if [[ ${#files_to_update[@]} -gt 0 ]]; then
+            echo "Updating namespace references in ${#files_to_update[@]} .tf file(s)..."
+            for tf_file in "${files_to_update[@]}"; do
+                echo "  Updating $(basename "$tf_file")..."
+
+                # Replace both patterns:
+                # 1. resource.kubernetes_namespace.XXX.metadata[0].name
+                # 2. kubernetes_namespace.XXX.metadata[0].name (without resource. prefix)
+                # Also handle optional [0] indexing: XXX[0].metadata[0].name
+
+                sed -i \
+                    -e 's|resource\.kubernetes_namespace\.[^.[]*\(\[0\]\)\?\.metadata\[0\]\.name|resource.google_gke_hub_namespace.fleet_namespace.scope_namespace_id|g' \
+                    -e 's|\([^.]\)kubernetes_namespace\.[^.[]*\(\[0\]\)\?\.metadata\[0\]\.name|\1google_gke_hub_namespace.fleet_namespace.scope_namespace_id|g' \
+                    "$tf_file"
+            done
+            echo "✓ Updated ${#files_to_update[@]} .tf file(s)"
+        else
+            echo "✓ No .tf files found with kubernetes_namespace references"
         fi
 
         # Remove state and apply new resource for each workspace
@@ -337,30 +369,49 @@ process_repo() {
                 continue
             fi
 
-            # Remove old resources from state
+            # Check if new resource already exists in state
+            local has_new_resource=false
+            if tofu state list 2>/dev/null | grep -q "google_gke_hub_namespace.fleet_namespace"; then
+                echo "  ✓ google_gke_hub_namespace.fleet_namespace already exists in state"
+                has_new_resource=true
+            fi
+
+            # Remove old resources from state (only if they exist)
+            local removed_any=false
             for resource in "${resources[@]}"; do
-                echo "  Removing kubernetes_namespace.$resource from state..."
-                if tofu state rm "kubernetes_namespace.$resource" 2>/dev/null; then
-                    echo "  ✓ Removed"
-                else
-                    # Try with index
-                    if tofu state rm "kubernetes_namespace.${resource}[0]" 2>/dev/null; then
-                        echo "  ✓ Removed [0]"
+                # Check if resource exists in state before trying to remove
+                if tofu state list 2>/dev/null | grep -q "kubernetes_namespace.$resource"; then
+                    echo "  Removing kubernetes_namespace.$resource from state..."
+                    if tofu state rm "kubernetes_namespace.$resource" 2>/dev/null; then
+                        echo "  ✓ Removed"
+                        removed_any=true
                     else
-                        echo "  ⚠️  Could not remove (may not exist in this workspace)"
+                        # Try with index
+                        if tofu state rm "kubernetes_namespace.${resource}[0]" 2>/dev/null; then
+                            echo "  ✓ Removed [0]"
+                            removed_any=true
+                        else
+                            echo "  ⚠️  Could not remove (unexpected error)"
+                        fi
                     fi
+                else
+                    echo "  ✓ kubernetes_namespace.$resource already removed from state"
                 fi
             done
 
-            # Apply the new google_gke_hub_namespace resource
-            echo ""
-            echo "  Applying new google_gke_hub_namespace.fleet_namespace..."
-            if tofu apply -target=google_gke_hub_namespace.fleet_namespace -var-file="$workspace.tfvars" -auto-approve; then
-                echo "  ✓ Applied successfully"
+            # Apply the new google_gke_hub_namespace resource (only if needed)
+            if [[ "$has_new_resource" == "false" ]]; then
+                echo ""
+                echo "  Applying new google_gke_hub_namespace.fleet_namespace..."
+                if tofu apply -target=google_gke_hub_namespace.fleet_namespace -var-file="$workspace.tfvars" -auto-approve; then
+                    echo "  ✓ Applied successfully"
+                else
+                    echo "  ❌ ERROR: Failed to apply google_gke_hub_namespace.fleet_namespace"
+                    echo "  You may need to manually apply this workspace"
+                    migration_failed=true
+                fi
             else
-                echo "  ❌ ERROR: Failed to apply google_gke_hub_namespace.fleet_namespace"
-                echo "  You may need to manually apply this workspace"
-                migration_failed=true
+                echo "  ✓ Skipping apply (resource already exists)"
             fi
         done
 
@@ -372,35 +423,46 @@ process_repo() {
             echo ""
             echo "✓ Migration complete for $repo"
 
-            # Commit changes to git
-            echo ""
-            echo "Committing changes to git..."
+            # Check if there are any changes to commit
+            if git status --porcelain *.tf 2>/dev/null | grep -q "^.M"; then
+                # Commit changes to git
+                echo ""
+                echo "Committing changes to git..."
 
-            # Add modified files
-            git add namespace.tf
+                # Add modified files
+                git add namespace.tf 2>/dev/null || true
 
-            # Add deployments.tf if it exists
-            if [[ -f "$repo_path/deployments.tf" ]]; then
-                git add deployments.tf
-            fi
+                # Add all modified .tf files
+                local modified_tf_files=($(git status --porcelain *.tf 2>/dev/null | grep "^.M" | awk '{print $2}'))
+                if [[ ${#modified_tf_files[@]} -gt 0 ]]; then
+                    for tf_file in "${modified_tf_files[@]}"; do
+                        echo "  Adding $(basename "$tf_file")..."
+                        git add "$tf_file"
+                    done
+                fi
 
-            # Check if locals.tf was modified (check git status)
-            if git status --porcelain locals.tf 2>/dev/null | grep -q "^.M"; then
-                git add locals.tf
-            fi
+                # Check if locals.tf was modified (check git status)
+                if git status --porcelain locals.tf 2>/dev/null | grep -q "^.M"; then
+                    echo "  Adding locals.tf..."
+                    git add locals.tf
+                fi
 
-            # Commit
-            if git commit -m "SRE-6189 switch to fleet namespace"; then
-                echo "✓ Changes committed to git"
+                # Commit
+                if git commit -m "SRE-6189 switch to fleet namespace"; then
+                    echo "✓ Changes committed to git"
 
-                # Push changes
-                if git push; then
-                    echo "✓ Changes pushed to remote"
+                    # Push changes
+                    if git push; then
+                        echo "✓ Changes pushed to remote"
+                    else
+                        echo "⚠️  Git push failed"
+                    fi
                 else
-                    echo "⚠️  Git push failed"
+                    echo "⚠️  Git commit failed"
                 fi
             else
-                echo "⚠️  Git commit failed or no changes to commit"
+                echo ""
+                echo "✓ No file changes to commit (migration already applied)"
             fi
         fi
     fi
