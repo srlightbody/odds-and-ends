@@ -1,0 +1,28 @@
+#!/bin/bash
+
+# store the current dir
+CUR_DIR=$(pwd)
+PARALELLISM=8
+
+# Let the person running the script know what's going on.
+echo "Pulling in latest changes for all repositories..."
+git_task(){
+    cd "$i";
+    # finally pull
+    git stash;
+    git checkout master;
+    git pull origin master;
+
+    # lets get back to the CUR_DIR
+    cd $CUR_DIR
+}
+# Find all git repositories and update it to the master latest revision
+#for i in $(find . -mindepth 1 -maxdepth 1 -type d); do
+for i in $(find . -maxdepth 2 -name .git -type d -prune | sed 's/\/\.git//g' ); do
+    ((n=n%PARALELLISM)); ((n++==0)) && wait
+    echo "";
+    echo $i;
+    git_task $i &
+done
+
+echo "Complete!"
